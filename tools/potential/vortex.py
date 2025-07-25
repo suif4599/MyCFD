@@ -122,7 +122,7 @@ class VortexPotential(Potential):
         r_squared_safe = np.maximum(r_squared, epsilon)
         r2_squared_safe = np.maximum(r2_squared, epsilon)
         
-        vx_local: npt.NDArray[np.float64] = -np.atan(l * y_local / denominator) / (2 * np.pi * l)
+        vx_local: npt.NDArray[np.float64] = -np.arctan(l * y_local / denominator) / (2 * np.pi * l)
         vy_local: npt.NDArray[np.float64] = np.log(r_squared_safe / r2_squared_safe) / (4 * np.pi * l)
         vx = vx_local * tangent[..., 0] + vy_local * normal[..., 0]
         vy = vx_local * tangent[..., 1] + vy_local * normal[..., 1]

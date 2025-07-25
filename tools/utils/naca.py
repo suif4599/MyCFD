@@ -49,6 +49,8 @@ def naca_4_digit_f(
     $$
     """
     def upper_surface(x_array: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
+        # Ensure x_array is always a numpy array
+        x_array = np.atleast_1d(x_array)
         y_c = np.zeros_like(x_array)
         y_t = 5 * t * (0.2969 * np.sqrt(x_array) - 0.1260 * x_array - 
                     0.3516 * x_array**2 + 0.2843 * x_array**3 - 
@@ -67,6 +69,8 @@ def naca_4_digit_f(
         return np.column_stack((x_upper, y_upper)) * c
     
     def lower_surface(x_array: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
+        # Ensure x_array is always a numpy array
+        x_array = np.atleast_1d(x_array)
         y_c = np.zeros_like(x_array)
         y_t = 5 * t * (0.2969 * np.sqrt(x_array) - 0.1260 * x_array - 
                     0.3516 * x_array**2 + 0.2843 * x_array**3 - 

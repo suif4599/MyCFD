@@ -1,5 +1,6 @@
 import numpy as np
 import numpy.typing as npt
+from scipy.integrate import quad
 
 from typing import cast, Union, overload
 from collections.abc import Sequence, Callable
@@ -14,6 +15,80 @@ AirfoilFunction = Union[
 class Airfoil:
     """
     A class to represent a airfoil shape defined by a set of points in 2D space.
+
+    Points Array (`points`):
+    - Represents the airfoil contour as a closed shape.
+    - Order: Counter-clockwise (CCW) traversal.
+    - Leading edge: points[0] (minimum x-coordinate).
+    - Trailing edge: Stored at index `tail_index` (farthest point from leading edge).
+    - Closure: points[0] and points[-1] do NOT coincide (implicit closure between last and first point).
+
+    Key Properties:
+    1. `panel`: Array of panel vectors
+    - panel[i] = points[(i+1) % n] - points[i] (vector from point i to next)
+    - Length: n panels (same as number of points)
+
+    2. `norm`: Outward unit normal vectors for each panel
+    - Derived from panel vectors: (dy, -dx) normalized
+
+    3. `tangent`: Unit tangent vectors for panels
+    - Direction: points[i] → points[(i+1) % n]
+
+    4. `length`: Length (magnitude) of each panel
+
+    5. `midpoint`: Midpoint coordinates of each panel
+
+    6. `tangent_length`: Cumulative arc length from leading edge
+    - tangent_length[i] = sum(length[0] to length[i])
+    - Total contour length = tangent_length[-1]
+
+    7. `chord`: Chord length (distance between leading edge and trailing edge)
+
+    8. `tail_index`: Index of trailing edge point
+
+    9. `center`: Center point coordinates of the airfoil
+    - Calculated as weighted average of panel midpoints using panel lengths as weights
+    - Returns: (x, y) coordinates as tuple[float, float]
+
+    Critical Methods:
+    1. position_along_edge(x, upper):
+    - Maps distance `x` from leading edge to point on contour
+    - upper=True: Upper surface (distance measured from LE along upper side)
+    - upper=False: Lower surface (distance measured from LE along lower side)
+    - Returns: (x, y) coordinates and panel index containing point
+    - Interpolation: Point lies on panel between points[i] and points[(i+1) % n]
+
+    2. expand(distance):
+    - Offsets airfoil along outward normals
+    - distance types:
+        • float: Uniform offset for all panels
+        • (upper_func, lower_func): 
+        - upper_func(s): Displacement for upper surface at arc length s from LE
+        - lower_func(s): Displacement for lower surface at arc length s from LE
+
+    3. Rotation:
+    - inplace_rotate(angle): Rotates CCW by angle (radians) in-place
+    - rotate(angle): Returns new rotated Airfoil instance
+
+    Surface Order & Indexing:
+    - Lower surface: Points [0 → tail_index] (LE to TE)
+    - Upper surface: Points [tail_index → -1] (TE to LE)
+    - Panel i connects points[i] → points[i+1] (last panel: points[-1] → points[0])
+
+    Constructor Notes:
+    Input points are processed to:
+    1. Ensure CCW order (reverse if clockwise)
+    2. Set points[0] as leading edge (min x)
+    3. Resample edges:
+    - Split edges > max_edge_length
+    - Remove points < min_edge_length apart
+    4. Rotate to align chord horizontally (unless auto_horizontal=False)
+
+    Key Invariants:
+    - points[0] ≠ points[-1]
+    - panel[i] = points[(i+1) % n] - points[i]
+    - norm[i] perpendicular to panel[i], pointing OUTWARD
+    - tail_index = index of max(points[i].distance(points[0]))
     """
     _norm_buffer: npt.NDArray[np.float64] | None = None
     _panel_buffer: npt.NDArray[np.float64] | None = None
@@ -21,6 +96,7 @@ class Airfoil:
     _length_buffer: npt.NDArray[np.float64] | None = None
     _mid_point_buffer: npt.NDArray[np.float64] | None = None
     _tangent_length_buffer: npt.NDArray[np.float64] | None = None
+    _center_buffer: tuple[float, float] | None = None
     _tail_index: int
     _chord_length: float
     points: npt.NDArray[np.float64]
@@ -37,7 +113,7 @@ class Airfoil:
         auto_horizontal: bool = True
     ) -> "Airfoil":
         """
-        Generates an airfoil shape from a sequence of functions.
+        Generates an airfoil shape from a sequence of functions with equal arc length distribution.
         Functions can be in the following formats:
         - A function that takes a float (as x-coordinate) and returns a float (y-coordinate).
         - A function that takes a float (as parameter t) and returns a tuple (x, y).
@@ -46,14 +122,60 @@ class Airfoil:
 
         @param func: A sequence of functions defining the airfoil shape.
         @param x_range: The range of x values to sample the functions over.
-        @param n_points: The number of points to sample.
+        @param n_points: The number of points to sample per function.
         @param max_edge_length: The maximum length of an edge between two points.
         @param min_edge_length: The minimum length of an edge between two points.
         @param reorder: Whether to reorder the points to optimize the shape.
         @param auto_horizontal: Whether to automatically rotate the airfoil to make the chord horizontal.
         """
+        def _calculate_arc_length_integrand(t: float, func_callable: Callable[[float], tuple[float, float]]) -> float:
+            """Calculate the derivative magnitude for arc length integration."""
+            dt = 1e-8
+            p1 = func_callable(t)
+            p2 = func_callable(t + dt)
+            dx_dt = (p2[0] - p1[0]) / dt
+            dy_dt = (p2[1] - p1[1]) / dt
+            return np.sqrt(dx_dt**2 + dy_dt**2)
+        
+        def _sample_equal_arc_length(func_callable: Callable[[float], tuple[float, float]], 
+                                   param_range: tuple[float, float], 
+                                   n_points: int) -> npt.NDArray[np.float64]:
+            """Sample points with equal arc length distribution."""
+            total_length, _ = quad(_calculate_arc_length_integrand, param_range[0], param_range[1], 
+                                 args=(func_callable,), limit=1000)
+            target_segment_length = total_length / (n_points - 1)
+            
+            points = []
+            current_param = param_range[0]
+            points.append(func_callable(current_param))
+            
+            for _ in range(1, n_points - 1):
+                def arc_length_from_current(t):
+                    if t <= current_param:
+                        return 0.0
+                    length, _ = quad(_calculate_arc_length_integrand, current_param, t, 
+                                   args=(func_callable,), limit=500)
+                    return length - target_segment_length
+                t_low = current_param
+                t_high = param_range[1]
+                t_mid = current_param
+                for _ in range(50):
+                    t_mid = (t_low + t_high) / 2
+                    arc_diff = arc_length_from_current(t_mid)
+                    if abs(arc_diff) < 1e-10:
+                        break
+                    elif arc_diff < 0:
+                        t_low = t_mid
+                    else:
+                        t_high = t_mid
+                current_param = t_mid
+                points.append(func_callable(current_param))
+            points.append(func_callable(param_range[1]))
+            return np.array(points, dtype=np.float64)
+
         mid = (x_range[0] + x_range[1]) / 2
         points: npt.NDArray[np.float64] = np.zeros((0, 2), dtype=np.float64)
+        
         for f in func:
             try: # float -> float | float -> tuple[float, float]
                 f = cast(Callable[[float], Union[float, tuple[float, float]]], f)
@@ -65,24 +187,43 @@ class Airfoil:
                         return x, f(x)
                     f = inner_func
                 f = cast(Callable[[float], tuple[float, float]], f)
-                point_list: list[tuple[float, float]] = []
-                for i in range(n_points):
-                    x = x_range[0] + i * (x_range[1] - x_range[0]) / (n_points - 1)
-                    point_list.append(f(x))
-                points = np.concat((points, np.array(point_list, dtype=np.float64)), axis=0)
+                new_points = _sample_equal_arc_length(f, x_range, n_points)
+                points = np.concatenate((points, new_points), axis=0)
+                
             except Exception:
-                # float -> ndarray
                 f = cast(Callable[[npt.NDArray[np.float64]], npt.NDArray[np.float64]], f)
                 res = f(np.array([mid], dtype=np.float64))
                 if not isinstance(res, np.ndarray):
                     raise TypeError("Unable to process function output, expected float, tuple or ndarray.")
-                x_linspace = np.linspace(x_range[0], x_range[1], n_points, dtype=np.float64)
-                new_points = f(x_linspace)
-                if points.ndim == 1:
-                    new_points = np.stack((x_linspace, new_points), axis=-1)
-                points = np.concat((points, new_points), axis=0)
+                x_dense = np.linspace(x_range[0], x_range[1], n_points * 5, dtype=np.float64)
+                y_dense = f(x_dense)
+                if y_dense.ndim == 1:
+                    dense_points = np.stack((x_dense, y_dense), axis=-1)
+                else:
+                    dense_points = y_dense
+                diffs = np.diff(dense_points, axis=0)
+                segment_lengths = np.sqrt(np.sum(diffs**2, axis=1))
+                cumulative_lengths = np.concatenate(([0], np.cumsum(segment_lengths)))
+                total_length = cumulative_lengths[-1]
+                target_lengths = np.linspace(0, total_length, n_points)
+                sampled_points = []
+                
+                for target_length in target_lengths:
+                    idx = np.searchsorted(cumulative_lengths, target_length)
+                    if idx == 0:
+                        sampled_points.append(dense_points[0])
+                    elif idx >= len(dense_points):
+                        sampled_points.append(dense_points[-1])
+                    else:
+                        # Interpolate
+                        t = (target_length - cumulative_lengths[idx-1]) / (cumulative_lengths[idx] - cumulative_lengths[idx-1])
+                        interpolated_point = dense_points[idx-1] + t * (dense_points[idx] - dense_points[idx-1])
+                        sampled_points.append(interpolated_point)
+                new_points = np.array(sampled_points, dtype=np.float64)
+                points = np.concatenate((points, new_points), axis=0)
+                
         points = cast(npt.NDArray[np.float64], points)
-        return cls(points, max_edge_length=max_edge_length, min_edge_length=min_edge_length, reorder=reorder)
+        return cls(points, max_edge_length=max_edge_length, min_edge_length=min_edge_length, reorder=reorder, auto_horizontal=auto_horizontal)
 
     def __init__(
         self,
@@ -257,6 +398,7 @@ class Airfoil:
         self._length_buffer = None
         self._mid_point_buffer = None
         self._tangent_length_buffer = None
+        self._center_buffer = None
         rotation_matrix = np.array([
             [np.cos(angle), -np.sin(angle)],
             [np.sin(angle), np.cos(angle)]
@@ -275,16 +417,33 @@ class Airfoil:
         return new_airfoil
     
     def expand(
-            self,
-            distance: float | tuple[Callable[[npt.NDArray[np.float64]], npt.NDArray[np.float64]], Callable[[npt.NDArray[np.float64]], npt.NDArray[np.float64]]]
-        ) -> 'Airfoil':
+        self,
+        distance: Union[
+            float, 
+            tuple[
+                Callable[[npt.NDArray[np.float64]], npt.NDArray[np.float64]],
+                Callable[[npt.NDArray[np.float64]], npt.NDArray[np.float64]]
+            ],
+            tuple[
+                npt.NDArray[np.float64],
+                npt.NDArray[np.float64]
+            ]
+        ]
+    ) -> 'Airfoil':
         """
         Returns a new Airfoil instance expanded by 
         a given distance or the displacement distance function (mapping the position along the edge to the distance)
         along its normal vectors.
 
-        @param distance: The distance or a tuple of functions (upper_func, lower_func) for upper and lower surfaces by which to expand the shape.
-                        The functions take distances from leading edge and return displacement distances.
+        @param distance: The distance by which to expand the shape. Can be:
+                        - float: Uniform distance for all panels
+                        - tuple of functions (upper_func, lower_func): Functions that take distances from 
+                          leading edge and return displacement distances for upper and lower surfaces
+                        - tuple of arrays (upper_distances, lower_distances): Arrays specifying displacement
+                          distances for each panel. upper_distances shape must be (n_upper_panels,) and 
+                          lower_distances shape must be (n_lower_panels,) where:
+                          * n_lower_panels: number of panels from leading edge to trailing edge on lower surface
+                          * n_upper_panels: number of panels from trailing edge to leading edge on upper surface
         @return: A new Airfoil instance with the expanded points.
         """
         if isinstance(distance, (int, float)):
@@ -301,7 +460,54 @@ class Airfoil:
                 auto_horizontal=False
             )
         
+        if isinstance(distance, tuple) and isinstance(distance[0], np.ndarray):
+            # distance is a tuple of arrays for upper and lower surfaces
+            upper_distances, lower_distances = distance
+            upper_distances = cast(npt.NDArray[np.float64], upper_distances)
+            lower_distances = cast(npt.NDArray[np.float64], lower_distances)
+            
+            # Get panel masks for upper and lower surfaces
+            panel_upper_mask = np.arange(len(self.points)) >= self.tail_index
+            panel_lower_mask = ~panel_upper_mask
+            
+            # Count panels for each surface
+            n_lower_panels = np.sum(panel_lower_mask)
+            n_upper_panels = np.sum(panel_upper_mask)
+            
+            # Validate array shapes
+            if len(lower_distances) != n_lower_panels:
+                raise ValueError(f"Lower surface distance array length ({len(lower_distances)}) "
+                               f"does not match number of lower surface panels ({n_lower_panels})")
+            if len(upper_distances) != n_upper_panels:
+                raise ValueError(f"Upper surface distance array length ({len(upper_distances)}) "
+                               f"does not match number of upper surface panels ({n_upper_panels})")
+            
+            # Create panel displacement distances array
+            panel_displacement_distances = np.zeros(len(self.points))
+            if np.any(panel_lower_mask):
+                panel_displacement_distances[panel_lower_mask] = lower_distances
+            if np.any(panel_upper_mask):
+                panel_displacement_distances[panel_upper_mask] = upper_distances
+                
+            # Apply displacement along normals
+            panel_normals = self.norm
+            new_points = np.zeros((len(self.points) * 2, 2), dtype=np.float64)
+            start_points = self.points
+            end_points = np.roll(self.points, -1, axis=0)
+            
+            new_points[::2] = start_points + panel_normals * panel_displacement_distances.reshape(-1, 1)
+            new_points[1::2] = end_points + panel_normals * panel_displacement_distances.reshape(-1, 1)
+            return Airfoil(
+                new_points,
+                self.max_edge_length,
+                self.min_edge_length,
+                auto_horizontal=False
+            )
+        
+        # If we reach here, distance is a tuple of functions
         upper_func, lower_func = distance
+        upper_func = cast(Callable[[npt.NDArray[np.float64]], npt.NDArray[np.float64]], upper_func)
+        lower_func = cast(Callable[[npt.NDArray[np.float64]], npt.NDArray[np.float64]], lower_func)
         tangent_lengths = self.tangent_length
 
         mid_pos = np.insert(
@@ -421,11 +627,39 @@ class Airfoil:
             self._tangent_length_buffer = np.cumsum(panel_lengths)
         return self._tangent_length_buffer
 
+    @property
+    def center(self) -> tuple[float, float]:
+        """
+        Returns the center point coordinates of the airfoil.
+        
+        The center is calculated as the weighted average of panel midpoints,
+        where each panel midpoint is weighted by its corresponding panel length.
+        This provides a geometrically meaningful center that accounts for the
+        distribution of the airfoil contour.
+        
+        Formula:
+        center = Σ(midpoint[i] * length[i]) / Σ(length[i])
+        
+        @return: Tuple of (x, y) coordinates representing the airfoil center.
+        """
+        if self._center_buffer is None:
+            midpoints = self.midpoint  # Shape: (n_panels, 2)
+            lengths = self.length      # Shape: (n_panels,)
+            
+            # Calculate weighted average: sum(midpoint * weight) / sum(weight)
+            weighted_sum = np.sum(midpoints * lengths[:, np.newaxis], axis=0)
+            total_length = np.sum(lengths)
+            
+            center_coords = weighted_sum / total_length
+            self._center_buffer = (float(center_coords[0]), float(center_coords[1]))
+        
+        return self._center_buffer
+
     @singledispatchmethod
     def _position_along_edge_impl(
         self,
         x: float | npt.NDArray[np.float64],
-        upper: bool | npt.NDArray[np.bool],
+        upper: bool | npt.NDArray[np.bool_],
     ) -> tuple[tuple[float, float], int] | tuple[npt.NDArray[np.float64], npt.NDArray[np.int64]]:
         raise NotImplementedError("This method should be implemented for specific types.")
         
@@ -457,7 +691,7 @@ class Airfoil:
     def _(
         self,
         x: npt.NDArray[np.float64],
-        upper: npt.NDArray[np.bool]
+        upper: npt.NDArray[np.bool_]
     ) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.int64]]:
         """
         Vectorized version of position_along_edge for computing positions of multiple points along the airfoil edge.
@@ -470,7 +704,7 @@ class Airfoil:
         """
         tangent_lengths = self.tangent_length
         x_array = np.asarray(x, dtype=np.float64)
-        upper_array = np.asarray(upper, dtype=np.bool)
+        upper_array = np.asarray(upper, dtype=np.bool_)
         x_array, upper_array = np.broadcast_arrays(x_array, upper_array)
         n_points = x_array.size
         positions = np.zeros((n_points, 2), dtype=np.float64)
@@ -516,13 +750,13 @@ class Airfoil:
     def position_along_edge(
         self,
         x: npt.NDArray[np.float64],
-        upper: npt.NDArray[np.bool],
+        upper: npt.NDArray[np.bool_],
     ) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.int64]]: ...
 
     def position_along_edge(
         self,
         x: float | npt.NDArray[np.float64],
-        upper: bool | npt.NDArray[np.bool],
+        upper: bool | npt.NDArray[np.bool_],
     ) -> tuple[tuple[float, float], int] | tuple[npt.NDArray[np.float64], npt.NDArray[np.int64]]:
         """
         Converts the absolute position of some point along the edge of the airfoil and the index of the panel.

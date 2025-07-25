@@ -2,6 +2,9 @@ from .base import Var, Const, Output
 from .solver import Chain, Solver
 from .potential_solver import PotentialSolver
 from .momentum_solver import MomentumSolver
+from .convergence import (
+    ConvergenceAnalyzer, ConvergenceMetric, StatisticMetric, custom_metric
+)
 
 __all__ = [
     "Var",
@@ -10,5 +13,9 @@ __all__ = [
     "Chain",
     "Solver",
     "PotentialSolver",
-    "MomentumSolver"
+    "MomentumSolver",
+    "ConvergenceAnalyzer",
+    "ConvergenceMetric", 
+    "StatisticMetric",
+    "custom_metric"
 ]

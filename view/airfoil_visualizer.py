@@ -99,11 +99,7 @@ class AirfoilVisualizer:
         else:
             if self.ax is not None:
                 self.ax.clear()
-        
-        # Ensure ax is not None for type checking
         assert self.ax is not None
-        
-        # Set equal aspect ratio to avoid distortion
         self.ax.set_aspect('equal')
         self.ax.grid(True, alpha=0.3)
         self.ax.set_xlabel('X Coordinate')
@@ -112,15 +108,10 @@ class AirfoilVisualizer:
     
     def _plot_airfoil_outline(self, config: Dict[str, Any]) -> None:
         """Plot the airfoil outline."""
-        assert self.ax is not None  # Type guard
-        
+        assert self.ax is not None
         airfoil = config['airfoil']
         points = airfoil.points
-        
-        # Close the curve for proper visualization
         closed_points = np.vstack([points, points[0]])
-        
-        # Plot filled polygon if requested
         if config['fill']:
             polygon = patches.Polygon(
                 points,
@@ -134,7 +125,6 @@ class AirfoilVisualizer:
             )
             self.ax.add_patch(polygon)
         else:
-            # Plot outline only
             self.ax.plot(
                 closed_points[:, 0],
                 closed_points[:, 1],
@@ -149,12 +139,9 @@ class AirfoilVisualizer:
         """Plot individual points."""
         if not config['show_points']:
             return
-            
-        assert self.ax is not None  # Type guard
-        
+        assert self.ax is not None
         airfoil = config['airfoil']
         points = airfoil.points
-        
         self.ax.scatter(
             points[:, 0],
             points[:, 1],
@@ -168,19 +155,13 @@ class AirfoilVisualizer:
         """Plot normal vectors."""
         if not config['show_normals']:
             return
-            
-        assert self.ax is not None  # Type guard
-        
+        assert self.ax is not None
         airfoil = config['airfoil']
         midpoints = airfoil.midpoint
         normals = airfoil.norm
-        
-        # Scale normals for visualization
         scaled_normals = normals * config['normal_scale']
-        
         for i in range(len(midpoints)):
             start = midpoints[i]
-            end = start + scaled_normals[i]
             self.ax.arrow(
                 start[0], start[1],
                 scaled_normals[i][0], scaled_normals[i][1],
@@ -196,12 +177,9 @@ class AirfoilVisualizer:
         """Plot panel vectors."""
         if not config['show_panels']:
             return
-            
-        assert self.ax is not None  # Type guard
-        
+        assert self.ax is not None
         airfoil = config['airfoil']
         points = airfoil.points
-        
         for i in range(len(points)):
             start = points[i]
             end = points[(i + 1) % len(points)]
@@ -218,12 +196,9 @@ class AirfoilVisualizer:
         """Plot panel midpoints."""
         if not config['show_midpoints']:
             return
-            
-        assert self.ax is not None  # Type guard
-        
+        assert self.ax is not None
         airfoil = config['airfoil']
         midpoints = airfoil.midpoint
-        
         self.ax.scatter(
             midpoints[:, 0],
             midpoints[:, 1],
@@ -236,12 +211,11 @@ class AirfoilVisualizer:
     
     def _add_leading_trailing_markers(self, config: Dict[str, Any]) -> None:
         """Add markers for leading and trailing edges."""
-        assert self.ax is not None  # Type guard
-        
+        assert self.ax is not None
         airfoil = config['airfoil']
         points = airfoil.points
         
-        # Leading edge (first point)
+        # Leading edge
         self.ax.scatter(
             points[0, 0], points[0, 1],
             s=50, c='green', marker='o',
@@ -284,9 +258,7 @@ class AirfoilVisualizer:
             return
         
         self._setup_figure()
-        assert self.ax is not None  # Type guard
-        
-        # Plot each airfoil
+        assert self.ax is not None
         for config in self.airfoils:
             self._plot_airfoil_outline(config)
             self._plot_points(config)
@@ -296,22 +268,17 @@ class AirfoilVisualizer:
             
             if show_leading_trailing:
                 self._add_leading_trailing_markers(config)
-        
-        # Customize plot
         if title:
             self.ax.set_title(title)
-        
         if xlim:
             self.ax.set_xlim(xlim)
         if ylim:
             self.ax.set_ylim(ylim)
-        
         if show_legend and any(config['label'] for config in self.airfoils):
             self.ax.legend()
         
         # Add markers explanation if leading/trailing edges are shown
         if show_leading_trailing:
-            # Add custom legend entries for leading/trailing edges
             from matplotlib.lines import Line2D
             custom_lines = [
                 Line2D([0], [0], marker='o', color='w', markerfacecolor='green', 
@@ -319,8 +286,6 @@ class AirfoilVisualizer:
                 Line2D([0], [0], marker='s', color='w', markerfacecolor='red', 
                        markersize=8, markeredgecolor='darkred', markeredgewidth=2)
             ]
-            
-            # Get existing legend
             handles, labels = self.ax.get_legend_handles_labels()
             handles.extend(custom_lines)
             labels.extend(['Leading Edge', 'Trailing Edge'])
@@ -329,11 +294,9 @@ class AirfoilVisualizer:
                 self.ax.legend(handles, labels)
         
         plt.tight_layout()
-        
         if save_path:
             plt.savefig(save_path, dpi=self.dpi, bbox_inches='tight')
             print(f"Plot saved to: {save_path}")
-        
         if show_plot:
             plt.show()
     
@@ -354,22 +317,14 @@ class AirfoilVisualizer:
         @param title: Plot title
         @param save_path: Path to save the figure
         """
-        # Default colors if not provided
         if colors is None:
             colors = ['blue', 'red', 'green', 'orange', 'purple', 'brown', 'pink', 'gray']
-        
-        # Default labels if not provided
         if labels is None:
             labels = [f'Airfoil {i+1}' for i in range(len(airfoils))]
-        
-        # Clear existing airfoils
         self.clear_airfoils()
-        
-        # Add all airfoils
         for i, airfoil in enumerate(airfoils):
             color = colors[i % len(colors)]
             label = labels[i] if i < len(labels) else f'Airfoil {i+1}'
-            
             self.add_airfoil(
                 airfoil=airfoil,
                 label=label,
@@ -378,109 +333,4 @@ class AirfoilVisualizer:
                 fill=True,
                 line_width=2.0
             )
-        
-        # Plot
         self.plot(title=title, save_path=save_path)
-
-
-def demo_airfoil_visualizer():
-    """
-    Demonstration of the AirfoilVisualizer functionality.
-    """
-    # Create some sample airfoils using simple functions
-    print("Creating sample airfoils...")
-    
-    # Create simple symmetric airfoil
-    def simple_upper(x):
-        return np.sqrt(x * (1 - x)) * 0.2
-    
-    def simple_lower(x):
-        return -np.sqrt(x * (1 - x)) * 0.2
-    
-    symmetric_airfoil = Airfoil.from_function(
-        [simple_upper, simple_lower],
-        n_points=50,
-        max_edge_length=0.1
-    )
-    
-    # Create cambered airfoil
-    def cambered_upper(x):
-        return np.sqrt(x * (1 - x)) * 0.2 + 0.02 * x * (1 - x)
-    
-    def cambered_lower(x):
-        return -np.sqrt(x * (1 - x)) * 0.2 + 0.02 * x * (1 - x)
-    
-    cambered_airfoil = Airfoil.from_function(
-        [cambered_upper, cambered_lower],
-        n_points=50,
-        max_edge_length=0.1
-    )
-    
-    # Create expanded version
-    expanded_airfoil = symmetric_airfoil.expand(0.02)
-    
-    # Create visualizer
-    visualizer = AirfoilVisualizer(figsize=(14, 10))
-    
-    # Example 1: Single airfoil with detailed visualization
-    print("Creating detailed single airfoil visualization...")
-    visualizer.add_airfoil(
-        symmetric_airfoil,
-        label='Symmetric Airfoil',
-        color='blue',
-        alpha=0.7,
-        fill=True,
-        show_points=True,
-        show_normals=True,
-        normal_scale=0.03,
-        show_midpoints=True
-    )
-    
-    visualizer.plot(
-        title='Detailed Airfoil Visualization (Symmetric)',
-        save_path='detailed_airfoil.png'
-    )
-    
-    # Example 2: Multiple airfoils comparison
-    print("Creating airfoil comparison...")
-    visualizer.plot_comparison(
-        airfoils=[symmetric_airfoil, cambered_airfoil, expanded_airfoil],
-        labels=['Symmetric', 'Cambered', 'Expanded Symmetric'],
-        colors=['blue', 'red', 'green'],
-        title='Airfoil Comparison',
-        save_path='airfoil_comparison.png'
-    )
-    
-    # Example 3: Custom visualization with multiple configurations
-    print("Creating custom multi-airfoil visualization...")
-    visualizer.clear_airfoils()
-    
-    visualizer.add_airfoil(
-        symmetric_airfoil,
-        label='Original',
-        color='blue',
-        alpha=0.5,
-        fill=True,
-        line_width=2
-    )
-    
-    visualizer.add_airfoil(
-        expanded_airfoil,
-        label='Expanded',
-        color='red',
-        alpha=0.3,
-        fill=False,
-        line_width=3,
-        line_style='--'
-    )
-    
-    visualizer.plot(
-        title='Original vs Expanded Airfoil',
-        save_path='original_vs_expanded.png'
-    )
-    
-    print("Demonstration completed!")
-
-
-if __name__ == "__main__":
-    demo_airfoil_visualizer()

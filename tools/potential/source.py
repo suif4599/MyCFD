@@ -117,7 +117,7 @@ class SourcePotential(Potential):
         x_local: npt.NDArray[np.float64] = np.sum(r * tangent, axis=-1)
         y_local: npt.NDArray[np.float64] = np.sum(r * normal, axis=-1)
         vx_local: npt.NDArray[np.float64] = np.log(r_squared / r2_squared) / (4 * np.pi * l)
-        vy_local: npt.NDArray[np.float64] = np.atan(l * y_local / (r_squared - l * x_local)) / (2 * np.pi * l)
+        vy_local: npt.NDArray[np.float64] = np.arctan(l * y_local / (r_squared - l * x_local)) / (2 * np.pi * l)
         vx = vx_local * tangent[..., 0] + vy_local * normal[..., 0]
         vy = vx_local * tangent[..., 1] + vy_local * normal[..., 1]
         return np.stack((vx, vy), axis=-1)

@@ -4,11 +4,13 @@ import numpy.typing as npt
 from tools import SourcePotential, Airfoil, VortexPotential
 from simulator import PanelMethod
 from view import View
-from PyQt5.QtWidgets import QApplication
+from PyQt6.QtWidgets import QApplication
 from collections.abc import Callable
 from tools.utils import naca_4_digit_f
 
-####### Airfoil.expand 还不能很好地处理尾部的情况，需要修改
+# TODO: 气流在前缘不能自然分开
+# TODO: 势流求解器对于异常数据应该提供插值
+# TODO: Var对于泛型的支持不够好
 
 half_cylinder = Airfoil(
     points=np.array(
@@ -55,38 +57,29 @@ panel_method = PanelMethod(
 )
 panel_method.compute(
     potential_func=VortexPotential(),
+    # center_potential=VortexPotential(),
     attack_angle=0.1,
     velocity=170.0,
     pressure=101325.0,
     rho=1.225,
-    apply_kutta_condition=True
+    apply_kutta_condition=True,
+    apply_leading_edge_condition=True,
+    expand=0.05,
 )
 print("Force:", panel_method.force)
 print("Cl/Cd:", panel_method.coef_lift / panel_method.coef_drag)
 app = QApplication([])
 view = View(
     field_func=panel_method.velocity,
-    width=2000,
-    height=1600,
-    x_range=(-4, 4),
-    y_range=(-4, 4),
-    calc_scale=0.25,
+    width=1000,
+    height=1000,
+    # x_range=(-2, 4),
+    # y_range=(-2, 2),
+    x_range=(-0.3, 0.2),
+    y_range=(-0.25, 0.25),
+    calc_scale=0.5,
     airfoil=panel_method.airfoil
 )
 view.show()
-exit(app.exec_())
-
-
-# from solver import PotentialSolver, Var
-# solver = PotentialSolver(VortexPotential())
-# ret = solver.solve(
-#     {
-#         Var("airfoil", Airfoil): naca_4_digit,
-#         Var("aoa", float): 0.2,
-#         Var("rho", float): 1.225,
-#         Var("v_{inf}", float): 170.0,
-#         Var("p_{inf}", float): 101325.0,
-#         Var("delta", float): 0.0,
-#     }
-# )
+exit(app.exec())
 
